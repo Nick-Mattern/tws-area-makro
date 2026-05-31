@@ -1,0 +1,664 @@
+// =========================================================
+// CD31_TWS_Area_Makro_V1.bsh
+// Semi-automatische Batch-Auswertung fuer CD31-IHC
+// Fiji/ImageJ + Trainable Weka Segmentation
+//
+// Zielparameter:
+//   CD31.Ar/T.Ar (%) = Total CD31-positive area / ROI area * 100
+//
+// Workflow entsprechend manueller Vorgehensweise:
+//   Bilderordner waehlen -> ROI-Ordner waehlen -> TWS-Classifier waehlen
+//   Pro Bild wird eine gleichnamige .roi geladen.
+//   ROI wird gemessen (T.Ar).
+//   Zur RAM-Entlastung wird nur ROI-Bounding-Box + Margin klassifiziert.
+//   TWS applyClassifier erzeugt Probability-Stack.
+//   CD31-Klasse wird per Argmax-Pixelklassifikation extrahiert.
+//   Maske wird direkt als weiss = CD31, schwarz = Hintergrund erzeugt.
+//   Kein Close, kein Fill Holes, kein Despeckle.
+//   Analyze Particles entspricht 0-Infinity ohne Groessenfilter.
+//   Fuer die finale Auswertung wird NICHT ImageJ-%Area verwendet,
+//   sondern Total CD31-positive area / ROI area * 100.
+//
+// Erwartete TWS-Klassen:
+//   Default: Slice 1 = CD31-positive class
+//   Dies kann im Dialog angepasst werden.
+//
+// Sprache: BeanShell
+// =========================================================
+
+// -------------------------
+// 1) IMPORTE
+// -------------------------
+import ij.IJ;
+import ij.ImagePlus;
+import ij.ImageStack;
+import ij.gui.GenericDialog;
+import ij.gui.Roi;
+import ij.io.DirectoryChooser;
+import ij.io.FileSaver;
+import ij.io.OpenDialog;
+import ij.io.RoiDecoder;
+import ij.measure.Calibration;
+import ij.measure.Measurements;
+import ij.measure.ResultsTable;
+import ij.process.ByteProcessor;
+import ij.process.ImageProcessor;
+import ij.process.ImageStatistics;
+import ij.plugin.filter.ParticleAnalyzer;
+import trainableSegmentation.WekaSegmentation;
+
+import java.awt.Color;
+import java.awt.Rectangle;
+import java.io.File;
+import java.io.FileWriter;
+import java.io.BufferedWriter;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Arrays;
+
+// -------------------------
+// 2) KONSTANTEN
+// -------------------------
+String MACRO_VERSION = "CD31_TWS_Area_Makro_V1_2026-05-31";
+
+// -------------------------
+// 3) HILFSFUNKTIONEN
+// -------------------------
+void ensureDir(String path) {
+    File d = new File(path);
+    if (!d.exists()) d.mkdirs();
+}
+
+boolean isImageFile(String name) {
+    String lower = name.toLowerCase();
+    return lower.endsWith(".tif") || lower.endsWith(".tiff") ||
+           lower.endsWith(".jpg") || lower.endsWith(".jpeg") ||
+           lower.endsWith(".png") || lower.endsWith(".bmp");
+}
+
+String getBaseName(String name) {
+    int dot = name.lastIndexOf('.');
+    if (dot > 0) return name.substring(0, dot);
+    return name;
+}
+
+String sanitizeForFileName(String s) {
+    if (s == null || s.length() == 0) return "Run";
+    return s.replaceAll("[^A-Za-z0-9_\\-]+", "_");
+}
+
+String csvEscape(String s) {
+    if (s == null) s = "";
+    s = s.replace("\"", "\"\"");
+    return "\"" + s + "\"";
+}
+
+String formatDouble(double x, int digits) {
+    if (Double.isNaN(x) || Double.isInfinite(x)) return "NA";
+    return IJ.d2s(x, digits);
+}
+
+void appendLog(String logPath, String msg) {
+    try {
+        BufferedWriter bw = new BufferedWriter(new FileWriter(logPath, true));
+        bw.write(msg);
+        bw.newLine();
+        bw.close();
+    } catch (Exception e) {
+        IJ.log("Konnte Log nicht schreiben: " + e.getMessage());
+    }
+    IJ.log(msg);
+}
+
+void ensureSummaryHeader(String summaryCsvPath) {
+    try {
+        File f = new File(summaryCsvPath);
+        if (!f.exists()) {
+            BufferedWriter bw = new BufferedWriter(new FileWriter(f, true));
+            bw.write(
+                "Run_ID," +
+                "Run_Name," +
+                "Macro_Version," +
+                "ImageName," +
+                "ImagePath," +
+                "ROI_File," +
+                "ROI_TAr_um2," +
+                "CD31_TotalArea_um2," +
+                "CD31_Ar_TAr_percent," +
+                "CD31_Positive_Pixels," +
+                "Particle_Count_0_Inf," +
+                "Particle_TotalArea_um2," +
+                "Particle_AverageSize_um2," +
+                "Classifier_Name," +
+                "Classifier_Path," +
+                "CD31_Class_Index," +
+                "PixelWidth_um," +
+                "PixelHeight_um," +
+                "ImageWidth_px," +
+                "ImageHeight_px," +
+                "CropX_px," +
+                "CropY_px," +
+                "CropWidth_px," +
+                "CropHeight_px," +
+                "CropMargin_px," +
+                "Run_Date"
+            );
+            bw.newLine();
+            bw.close();
+        }
+    } catch (Exception e) {
+        IJ.log("Konnte Summary-Header nicht schreiben: " + e.getMessage());
+    }
+}
+
+void appendSummaryRow(
+    String summaryCsvPath,
+    String runId,
+    String runName,
+    String macroVersion,
+    String imageName,
+    String imagePath,
+    String roiFile,
+    double roiTar,
+    double cd31Area,
+    double cd31Pct,
+    long cd31Pixels,
+    int particleCount,
+    double particleTotalArea,
+    double particleAverageSize,
+    String classifierName,
+    String classifierPath,
+    int cd31ClassIndex,
+    double pixelWidthUm,
+    double pixelHeightUm,
+    int imageWidth,
+    int imageHeight,
+    int cropX,
+    int cropY,
+    int cropWidth,
+    int cropHeight,
+    int cropMargin,
+    String runDate
+) {
+    try {
+        BufferedWriter bw = new BufferedWriter(new FileWriter(summaryCsvPath, true));
+        bw.write(
+            csvEscape(runId) + "," +
+            csvEscape(runName) + "," +
+            csvEscape(macroVersion) + "," +
+            csvEscape(imageName) + "," +
+            csvEscape(imagePath) + "," +
+            csvEscape(roiFile) + "," +
+            formatDouble(roiTar, 3) + "," +
+            formatDouble(cd31Area, 3) + "," +
+            formatDouble(cd31Pct, 6) + "," +
+            cd31Pixels + "," +
+            particleCount + "," +
+            formatDouble(particleTotalArea, 3) + "," +
+            formatDouble(particleAverageSize, 3) + "," +
+            csvEscape(classifierName) + "," +
+            csvEscape(classifierPath) + "," +
+            cd31ClassIndex + "," +
+            formatDouble(pixelWidthUm, 9) + "," +
+            formatDouble(pixelHeightUm, 9) + "," +
+            imageWidth + "," +
+            imageHeight + "," +
+            cropX + "," +
+            cropY + "," +
+            cropWidth + "," +
+            cropHeight + "," +
+            cropMargin + "," +
+            csvEscape(runDate)
+        );
+        bw.newLine();
+        bw.close();
+    } catch (Exception e) {
+        IJ.log("Konnte Summary-Zeile nicht schreiben: " + e.getMessage());
+    }
+}
+
+Roi loadMatchingRoi(String roiDirPath, String baseName) {
+    try {
+        String roiPath = roiDirPath + baseName + ".roi";
+        File roiFile = new File(roiPath);
+        if (!roiFile.exists()) return null;
+        RoiDecoder rd = new RoiDecoder(roiPath);
+        return rd.getRoi();
+    } catch (Exception e) {
+        IJ.log("Konnte ROI nicht laden fuer " + baseName + ": " + e.getMessage());
+        return null;
+    }
+}
+
+double measureRoiAreaUm2(ImagePlus img, Roi roi) {
+    img.setRoi(roi);
+    ImageStatistics stats = img.getStatistics(Measurements.AREA);
+    img.deleteRoi();
+    return stats.area;
+}
+
+Rectangle getExpandedCropBounds(Roi roi, int imgWidth, int imgHeight, int marginPx) {
+    Rectangle r = roi.getBounds();
+
+    int x = r.x - marginPx;
+    int y = r.y - marginPx;
+    int w = r.width + 2 * marginPx;
+    int h = r.height + 2 * marginPx;
+
+    if (x < 0) { w += x; x = 0; }
+    if (y < 0) { h += y; y = 0; }
+    if (x + w > imgWidth)  w = imgWidth - x;
+    if (y + h > imgHeight) h = imgHeight - y;
+
+    if (w < 1) w = 1;
+    if (h < 1) h = 1;
+
+    return new Rectangle(x, y, w, h);
+}
+
+ImagePlus cropImageToBounds(ImagePlus img, Rectangle bounds) {
+    img.setRoi(new Roi(bounds.x, bounds.y, bounds.width, bounds.height));
+    ImagePlus crop = img.crop();
+    img.deleteRoi();
+    crop.setCalibration(img.getCalibration());
+    return crop;
+}
+
+boolean isMaskEdge(ImageProcessor maskIp, int x, int y, int w, int h) {
+    if (maskIp.getPixel(x, y) == 0) return false;
+    if (x == 0 || y == 0 || x == w - 1 || y == h - 1) return true;
+    if (maskIp.getPixel(x - 1, y) == 0) return true;
+    if (maskIp.getPixel(x + 1, y) == 0) return true;
+    if (maskIp.getPixel(x, y - 1) == 0) return true;
+    if (maskIp.getPixel(x, y + 1) == 0) return true;
+    return false;
+}
+
+void drawDot(ImageProcessor ip, int x, int y, int radius) {
+    int w = ip.getWidth();
+    int h = ip.getHeight();
+    for (int yy = y - radius; yy <= y + radius; yy++) {
+        for (int xx = x - radius; xx <= x + radius; xx++) {
+            if (xx >= 0 && yy >= 0 && xx < w && yy < h) ip.drawPixel(xx, yy);
+        }
+    }
+}
+
+void drawMaskEdges(ImageProcessor qcIp, ImageProcessor maskIp, int w, int h, Color color, int radius) {
+    qcIp.setColor(color);
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            if (isMaskEdge(maskIp, x, y, w, h)) drawDot(qcIp, x, y, radius);
+        }
+    }
+}
+
+void drawGlobalRoiEdge(ImageProcessor qcIp, Roi globalRoi, int xOffset, int yOffset, int w, int h, Color color, int radius) {
+    qcIp.setColor(color);
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            int gx = x + xOffset;
+            int gy = y + yOffset;
+            if (globalRoi.contains(gx, gy)) {
+                boolean edge = false;
+                if (!globalRoi.contains(gx - 1, gy)) edge = true;
+                if (!globalRoi.contains(gx + 1, gy)) edge = true;
+                if (!globalRoi.contains(gx, gy - 1)) edge = true;
+                if (!globalRoi.contains(gx, gy + 1)) edge = true;
+                if (edge) drawDot(qcIp, x, y, radius);
+            }
+        }
+    }
+}
+
+void saveQcOverlay(ImagePlus cropImg, ImagePlus maskImg, Roi globalRoi, int xOffset, int yOffset, String outPath) {
+    try {
+        ImagePlus qc = cropImg.duplicate();
+        if (qc.getStackSize() > 1) qc.setSlice(1);
+        IJ.run(qc, "RGB Color", "");
+
+        ImageProcessor qcIp = qc.getProcessor();
+        ImageProcessor maskIp = maskImg.getProcessor();
+
+        int w = qc.getWidth();
+        int h = qc.getHeight();
+
+        // ROI-Grenze schwarz breit + weiss schmal
+        drawGlobalRoiEdge(qcIp, globalRoi, xOffset, yOffset, w, h, Color.black, 2);
+        drawGlobalRoiEdge(qcIp, globalRoi, xOffset, yOffset, w, h, Color.white, 1);
+
+        // CD31-Maskenrand magenta
+        drawMaskEdges(qcIp, maskIp, w, h, Color.magenta, 1);
+
+        new FileSaver(qc).saveAsTiff(outPath);
+        qc.close();
+    } catch (Exception e) {
+        IJ.log("Konnte QC-Overlay nicht speichern: " + e.getMessage());
+    }
+}
+
+void setMicronCalibration(ImagePlus img, double pixelWidthUm, double pixelHeightUm) {
+    Calibration cal = img.getCalibration();
+    if (cal == null) cal = new Calibration();
+    cal.pixelWidth = pixelWidthUm;
+    cal.pixelHeight = pixelHeightUm;
+    cal.pixelDepth = 1.0;
+    cal.setUnit("micron");
+    img.setCalibration(cal);
+}
+
+int getArgmaxClassIndex(ImageStack probStack, int x, int y, int stackSize) {
+    int bestIdx = 1;
+    float bestVal = -1.0f;
+    for (int s = 1; s <= stackSize; s++) {
+        float v = probStack.getProcessor(s).getPixelValue(x, y);
+        if (v > bestVal) {
+            bestVal = v;
+            bestIdx = s;
+        }
+    }
+    return bestIdx;
+}
+
+double[] analyzeParticles0Infinity(ImagePlus maskImg) {
+    double[] out = new double[3]; // count, totalArea, averageSize
+    out[0] = 0;
+    out[1] = 0;
+    out[2] = 0;
+
+    try {
+        ResultsTable rt = new ResultsTable();
+        int options = ParticleAnalyzer.SHOW_NONE | ParticleAnalyzer.CLEAR_WORKSHEET;
+        int measurements = Measurements.AREA;
+        ParticleAnalyzer pa = new ParticleAnalyzer(options, measurements, rt, 0.0, Double.POSITIVE_INFINITY, 0.0, 1.0);
+        pa.setHideOutputImage(true);
+        boolean ok = pa.analyze(maskImg);
+        int n = rt.size();
+        double sumArea = 0.0;
+        for (int i = 0; i < n; i++) {
+            sumArea += rt.getValue("Area", i);
+        }
+        out[0] = n;
+        out[1] = sumArea;
+        if (n > 0) out[2] = sumArea / n;
+    } catch (Exception e) {
+        IJ.log("Analyze Particles intern fehlgeschlagen: " + e.getMessage());
+    }
+
+    return out;
+}
+
+// -------------------------
+// 4) ORDNER UND DATEIEN WAEHLEN
+// -------------------------
+DirectoryChooser dcIn = new DirectoryChooser("1) Bildordner mit Originalbildern waehlen");
+String inputDir = dcIn.getDirectory();
+if (inputDir == null) return;
+
+DirectoryChooser dcRoi = new DirectoryChooser("2) ROI-Ordner waehlen (.roi, gleicher Name wie Bild)");
+String roiDir = dcRoi.getDirectory();
+if (roiDir == null) return;
+
+OpenDialog od = new OpenDialog("3) Trainable-Weka-Classifier waehlen (.model)", null);
+String classifierDir = od.getDirectory();
+String classifierName = od.getFileName();
+if (classifierDir == null || classifierName == null) return;
+String classifierPath = classifierDir + classifierName;
+
+DirectoryChooser dcOut = new DirectoryChooser("4) Output-Ordner waehlen");
+String outputDir = dcOut.getDirectory();
+if (outputDir == null) return;
+
+// -------------------------
+// 5) PARAMETERDIALOG
+// -------------------------
+GenericDialog gd = new GenericDialog("CD31 TWS Area Analyse");
+gd.addStringField("Run_Name", "CD31_TWS_Run", 30);
+gd.addNumericField("CD31_Class_Index_in_TWS_probability_stack", 1, 0);
+gd.addNumericField("Pixel_width_um", 1.02, 6);
+gd.addNumericField("Pixel_height_um", 1.02, 6);
+gd.addCheckbox("Overwrite_image_calibration_with_values_above", true);
+gd.addNumericField("ROI_crop_margin_px", 50, 0);
+gd.addCheckbox("Save_CD31_raw_masks", true);
+gd.addCheckbox("Save_QC_overlays", true);
+gd.addMessage("Hinweis: CD31-Maske wird direkt als weiss=positiv, schwarz=Hintergrund erzeugt.\nKein Close, kein Fill Holes, Analyze Particles 0-Infinity.");
+gd.showDialog();
+if (gd.wasCanceled()) return;
+
+String runName = gd.getNextString();
+int cd31ClassIndex = (int) gd.getNextNumber();
+double pixelWidthUm = gd.getNextNumber();
+double pixelHeightUm = gd.getNextNumber();
+boolean overwriteCal = gd.getNextBoolean();
+int cropMarginPx = (int) gd.getNextNumber();
+boolean saveMasks = gd.getNextBoolean();
+boolean saveOverlays = gd.getNextBoolean();
+
+if (cd31ClassIndex < 1) cd31ClassIndex = 1;
+if (cropMarginPx < 0) cropMarginPx = 0;
+
+// -------------------------
+// 6) OUTPUT-STRUKTUR
+// -------------------------
+String runDate = new SimpleDateFormat("yyyy-MM-dd_HH-mm-ss").format(new Date());
+String runId = runDate + "_" + sanitizeForFileName(runName);
+
+String runOutDir = outputDir + runId + File.separator;
+String maskDir = runOutDir + "CD31_raw_masks" + File.separator;
+String qcDir = runOutDir + "QC_overlays" + File.separator;
+String cropDir = runOutDir + "ROI_crops" + File.separator;
+String summaryCsvPath = runOutDir + "CD31_TWS_Summary.csv";
+String logPath = runOutDir + "CD31_TWS_Log.txt";
+
+ensureDir(runOutDir);
+ensureDir(maskDir);
+ensureDir(qcDir);
+ensureDir(cropDir);
+ensureSummaryHeader(summaryCsvPath);
+
+appendLog(logPath, "=================================================");
+appendLog(logPath, "Start: " + runDate);
+appendLog(logPath, "Run_ID: " + runId);
+appendLog(logPath, "Run_Name: " + runName);
+appendLog(logPath, "Macro_Version: " + MACRO_VERSION);
+appendLog(logPath, "Input: " + inputDir);
+appendLog(logPath, "ROI: " + roiDir);
+appendLog(logPath, "Classifier: " + classifierPath);
+appendLog(logPath, "Output: " + runOutDir);
+appendLog(logPath, "CD31_Class_Index: " + cd31ClassIndex);
+appendLog(logPath, "Pixel size: " + pixelWidthUm + " x " + pixelHeightUm + " um");
+appendLog(logPath, "Overwrite calibration: " + overwriteCal);
+appendLog(logPath, "Crop margin px: " + cropMarginPx);
+
+// -------------------------
+// 7) CLASSIFIER LADEN
+// -------------------------
+WekaSegmentation segmentator = new WekaSegmentation();
+segmentator.loadClassifier(classifierPath);
+
+// -------------------------
+// 8) DATEIEN VERARBEITEN
+// -------------------------
+File inDirFile = new File(inputDir);
+File[] files = inDirFile.listFiles();
+if (files == null || files.length == 0) {
+    IJ.error("Im Bildordner wurden keine Dateien gefunden.");
+    return;
+}
+Arrays.sort(files);
+
+int processed = 0;
+int skipped = 0;
+
+for (int i = 0; i < files.length; i++) {
+    File f = files[i];
+    if (f == null || f.isDirectory()) continue;
+    String fileName = f.getName();
+    if (!isImageFile(fileName)) continue;
+
+    String baseName = getBaseName(fileName);
+    appendLog(logPath, "-------------------------------------------------");
+    appendLog(logPath, "Bild: " + fileName);
+
+    ImagePlus img = null;
+    ImagePlus cropImg = null;
+    ImagePlus prob = null;
+    ImagePlus maskImg = null;
+
+    try {
+        Roi roi = loadMatchingRoi(roiDir, baseName);
+        if (roi == null) {
+            appendLog(logPath, "  -> UEBERSPRUNGEN: Keine passende ROI gefunden: " + baseName + ".roi");
+            skipped++;
+            continue;
+        }
+
+        img = IJ.openImage(f.getAbsolutePath());
+        if (img == null) {
+            appendLog(logPath, "  -> UEBERSPRUNGEN: Bild konnte nicht geoeffnet werden.");
+            skipped++;
+            continue;
+        }
+
+        if (overwriteCal) {
+            setMicronCalibration(img, pixelWidthUm, pixelHeightUm);
+        } else {
+            Calibration cal0 = img.getCalibration();
+            pixelWidthUm = cal0.pixelWidth;
+            pixelHeightUm = cal0.pixelHeight;
+        }
+
+        double roiTarUm2 = measureRoiAreaUm2(img, roi);
+        if (roiTarUm2 <= 0 || Double.isNaN(roiTarUm2)) {
+            appendLog(logPath, "  -> UEBERSPRUNGEN: ROI-Flaeche ungueltig.");
+            skipped++;
+            continue;
+        }
+
+        Rectangle cropBounds = getExpandedCropBounds(roi, img.getWidth(), img.getHeight(), cropMarginPx);
+        cropImg = cropImageToBounds(img, cropBounds);
+        cropImg.setTitle(baseName + "_ROI_crop");
+        if (overwriteCal) setMicronCalibration(cropImg, pixelWidthUm, pixelHeightUm);
+
+        new FileSaver(cropImg).saveAsTiff(cropDir + baseName + "_ROI_crop.tif");
+
+        // TWS anwenden: Probability-Stack
+        prob = segmentator.applyClassifier(cropImg, 0, true);
+        if (prob == null) {
+            appendLog(logPath, "  -> FEHLER: TWS Probability-Stack konnte nicht erzeugt werden.");
+            skipped++;
+            continue;
+        }
+
+        int stackSize = prob.getStackSize();
+        if (cd31ClassIndex > stackSize) {
+            appendLog(logPath, "  -> FEHLER: CD31_Class_Index groesser als StackSize. StackSize=" + stackSize);
+            skipped++;
+            continue;
+        }
+
+        ImageStack probStack = prob.getStack();
+        int w = cropImg.getWidth();
+        int h = cropImg.getHeight();
+
+        ByteProcessor maskBp = new ByteProcessor(w, h);
+        long cd31PixelCount = 0;
+
+        // Argmax-Klassifikation innerhalb der gespeicherten Polygon-ROI.
+        for (int y = 0; y < h; y++) {
+            int gy = y + cropBounds.y;
+            for (int x = 0; x < w; x++) {
+                int gx = x + cropBounds.x;
+                if (roi.contains(gx, gy)) {
+                    int best = getArgmaxClassIndex(probStack, x, y, stackSize);
+                    if (best == cd31ClassIndex) {
+                        maskBp.set(x, y, 255); // CD31 positiv weiss
+                        cd31PixelCount++;
+                    } else {
+                        maskBp.set(x, y, 0);
+                    }
+                } else {
+                    maskBp.set(x, y, 0);
+                }
+            }
+        }
+
+        maskImg = new ImagePlus(baseName + "_CD31_raw_mask", maskBp);
+        maskImg.setCalibration(cropImg.getCalibration());
+
+        double cd31AreaUm2 = cd31PixelCount * pixelWidthUm * pixelHeightUm;
+        double cd31Pct = (cd31AreaUm2 / roiTarUm2) * 100.0;
+
+        // Analyze Particles 0-Infinity auf der Maske, nur als QC/vergleichbare Ausgabe.
+        double[] particleOut = analyzeParticles0Infinity(maskImg);
+        int particleCount = (int) particleOut[0];
+        double particleTotalArea = particleOut[1];
+        double particleAverageSize = particleOut[2];
+
+        if (saveMasks) {
+            new FileSaver(maskImg).saveAsTiff(maskDir + baseName + "_CD31_raw_mask.tif");
+        }
+        if (saveOverlays) {
+            saveQcOverlay(cropImg, maskImg, roi, cropBounds.x, cropBounds.y, qcDir + baseName + "_QC_overlay.tif");
+        }
+
+        appendSummaryRow(
+            summaryCsvPath,
+            runId,
+            runName,
+            MACRO_VERSION,
+            fileName,
+            f.getAbsolutePath(),
+            baseName + ".roi",
+            roiTarUm2,
+            cd31AreaUm2,
+            cd31Pct,
+            cd31PixelCount,
+            particleCount,
+            particleTotalArea,
+            particleAverageSize,
+            classifierName,
+            classifierPath,
+            cd31ClassIndex,
+            pixelWidthUm,
+            pixelHeightUm,
+            img.getWidth(),
+            img.getHeight(),
+            cropBounds.x,
+            cropBounds.y,
+            cropBounds.width,
+            cropBounds.height,
+            cropMarginPx,
+            runDate
+        );
+
+        appendLog(logPath, "  ROI_TAr_um2: " + formatDouble(roiTarUm2, 3));
+        appendLog(logPath, "  CD31_TotalArea_um2: " + formatDouble(cd31AreaUm2, 3));
+        appendLog(logPath, "  CD31.Ar/T.Ar_percent: " + formatDouble(cd31Pct, 6));
+        appendLog(logPath, "  Particle_Count_0_Inf: " + particleCount);
+
+        processed++;
+
+    } catch (Exception e) {
+        appendLog(logPath, "  -> FEHLER: " + e.getMessage());
+        skipped++;
+    } finally {
+        try { if (img != null) img.close(); } catch (Exception ee) {}
+        try { if (cropImg != null) cropImg.close(); } catch (Exception ee) {}
+        try { if (prob != null) prob.close(); } catch (Exception ee) {}
+        try { if (maskImg != null) maskImg.close(); } catch (Exception ee) {}
+    }
+}
+
+appendLog(logPath, "=================================================");
+appendLog(logPath, "Fertig.");
+appendLog(logPath, "Verarbeitet: " + processed);
+appendLog(logPath, "Uebersprungen/Fehler: " + skipped);
+appendLog(logPath, "Summary: " + summaryCsvPath);
+appendLog(logPath, "=================================================");
+
+IJ.showMessage("CD31 TWS Area Analyse fertig",
+    "Verarbeitet: " + processed + "\n" +
+    "Uebersprungen/Fehler: " + skipped + "\n\n" +
+    "Output:\n" + runOutDir
+);

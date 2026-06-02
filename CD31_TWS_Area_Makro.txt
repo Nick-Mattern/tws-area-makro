@@ -1,27 +1,23 @@
 // =========================================================
-// CD31_TWS_Area_Makro_V1.bsh
+// CD31_TWS_Area_Makro_V3_CREATE_RESULT_FINAL.bsh
 // Semi-automatische Batch-Auswertung fuer CD31-IHC
 // Fiji/ImageJ + Trainable Weka Segmentation
 //
-// Zielparameter:
-//   CD31.Ar/T.Ar (%) = Total CD31-positive area / ROI area * 100
+// FINALER WORKFLOW FUER DAS METHODENPAPER:
+//   - Bilderordner waehlen
+//   - ROI-Ordner waehlen (.roi mit gleichem Basisnamen wie Bild)
+//   - Trainable-Weka-Classifier waehlen (.model)
+//   - Output-Ordner waehlen
+//   - Pro Bild: ROI laden, TWS Create-Result erzeugen, CD31-Klasse thresholden
+//   - Maske: CD31 weiss, Hintergrund schwarz
+//   - Analyze Particles 0-Infinity, kein Close, kein Fill Holes, kein Filter
+//   - Finaler Parameter: CD31.Ar/T.Ar (%) = Total CD31-positive area / ROI area * 100
 //
-// Workflow entsprechend manueller Vorgehensweise:
-//   Bilderordner waehlen -> ROI-Ordner waehlen -> TWS-Classifier waehlen
-//   Pro Bild wird eine gleichnamige .roi geladen.
-//   ROI wird gemessen (T.Ar).
-//   Zur RAM-Entlastung wird nur ROI-Bounding-Box + Margin klassifiziert.
-//   TWS applyClassifier erzeugt Probability-Stack.
-//   CD31-Klasse wird per Argmax-Pixelklassifikation extrahiert.
-//   Maske wird direkt als weiss = CD31, schwarz = Hintergrund erzeugt.
-//   Kein Close, kein Fill Holes, kein Despeckle.
-//   Analyze Particles entspricht 0-Infinity ohne Groessenfilter.
-//   Fuer die finale Auswertung wird NICHT ImageJ-%Area verwendet,
-//   sondern Total CD31-positive area / ROI area * 100.
-//
-// Erwartete TWS-Klassen:
-//   Default: Slice 1 = CD31-positive class
-//   Dies kann im Dialog angepasst werden.
+// WICHTIG:
+//   Dieses Makro verwendet bewusst das klassifizierte TWS-Result-Bild
+//   entsprechend dem manuellen Workflow "Create Result -> Threshold Klasse 0".
+//   Es verwendet NICHT den Probability/Argmax-Stack.
+//   Es verwendet NICHT die ImageJ-%Area-Spalte fuer den finalen Wert.
 //
 // Sprache: BeanShell
 // =========================================================
@@ -31,7 +27,6 @@
 // -------------------------
 import ij.IJ;
 import ij.ImagePlus;
-import ij.ImageStack;
 import ij.gui.GenericDialog;
 import ij.gui.Roi;
 import ij.io.DirectoryChooser;
@@ -48,7 +43,6 @@ import ij.plugin.filter.ParticleAnalyzer;
 import trainableSegmentation.WekaSegmentation;
 
 import java.awt.Color;
-import java.awt.Rectangle;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.BufferedWriter;
@@ -59,7 +53,7 @@ import java.util.Arrays;
 // -------------------------
 // 2) KONSTANTEN
 // -------------------------
-String MACRO_VERSION = "CD31_TWS_Area_Makro_V1_2026-05-31";
+String MACRO_VERSION = "CD31_TWS_Area_Makro_V3_CREATE_RESULT_FINAL_2026-05-31";
 
 // -------------------------
 // 3) HILFSFUNKTIONEN
@@ -131,16 +125,11 @@ void ensureSummaryHeader(String summaryCsvPath) {
                 "Particle_AverageSize_um2," +
                 "Classifier_Name," +
                 "Classifier_Path," +
-                "CD31_Class_Index," +
+                "CD31_Result_Class_Value," +
                 "PixelWidth_um," +
                 "PixelHeight_um," +
                 "ImageWidth_px," +
                 "ImageHeight_px," +
-                "CropX_px," +
-                "CropY_px," +
-                "CropWidth_px," +
-                "CropHeight_px," +
-                "CropMargin_px," +
                 "Run_Date"
             );
             bw.newLine();
@@ -168,16 +157,11 @@ void appendSummaryRow(
     double particleAverageSize,
     String classifierName,
     String classifierPath,
-    int cd31ClassIndex,
+    int cd31ResultClassValue,
     double pixelWidthUm,
     double pixelHeightUm,
     int imageWidth,
     int imageHeight,
-    int cropX,
-    int cropY,
-    int cropWidth,
-    int cropHeight,
-    int cropMargin,
     String runDate
 ) {
     try {
@@ -198,16 +182,11 @@ void appendSummaryRow(
             formatDouble(particleAverageSize, 3) + "," +
             csvEscape(classifierName) + "," +
             csvEscape(classifierPath) + "," +
-            cd31ClassIndex + "," +
+            cd31ResultClassValue + "," +
             formatDouble(pixelWidthUm, 9) + "," +
             formatDouble(pixelHeightUm, 9) + "," +
             imageWidth + "," +
             imageHeight + "," +
-            cropX + "," +
-            cropY + "," +
-            cropWidth + "," +
-            cropHeight + "," +
-            cropMargin + "," +
             csvEscape(runDate)
         );
         bw.newLine();
@@ -230,38 +209,21 @@ Roi loadMatchingRoi(String roiDirPath, String baseName) {
     }
 }
 
+void setMicronCalibration(ImagePlus img, double pixelWidthUm, double pixelHeightUm) {
+    Calibration cal = img.getCalibration();
+    if (cal == null) cal = new Calibration();
+    cal.pixelWidth = pixelWidthUm;
+    cal.pixelHeight = pixelHeightUm;
+    cal.pixelDepth = 1.0;
+    cal.setUnit("micron");
+    img.setCalibration(cal);
+}
+
 double measureRoiAreaUm2(ImagePlus img, Roi roi) {
     img.setRoi(roi);
     ImageStatistics stats = img.getStatistics(Measurements.AREA);
     img.deleteRoi();
     return stats.area;
-}
-
-Rectangle getExpandedCropBounds(Roi roi, int imgWidth, int imgHeight, int marginPx) {
-    Rectangle r = roi.getBounds();
-
-    int x = r.x - marginPx;
-    int y = r.y - marginPx;
-    int w = r.width + 2 * marginPx;
-    int h = r.height + 2 * marginPx;
-
-    if (x < 0) { w += x; x = 0; }
-    if (y < 0) { h += y; y = 0; }
-    if (x + w > imgWidth)  w = imgWidth - x;
-    if (y + h > imgHeight) h = imgHeight - y;
-
-    if (w < 1) w = 1;
-    if (h < 1) h = 1;
-
-    return new Rectangle(x, y, w, h);
-}
-
-ImagePlus cropImageToBounds(ImagePlus img, Rectangle bounds) {
-    img.setRoi(new Roi(bounds.x, bounds.y, bounds.width, bounds.height));
-    ImagePlus crop = img.crop();
-    img.deleteRoi();
-    crop.setCalibration(img.getCalibration());
-    return crop;
 }
 
 boolean isMaskEdge(ImageProcessor maskIp, int x, int y, int w, int h) {
@@ -293,39 +255,36 @@ void drawMaskEdges(ImageProcessor qcIp, ImageProcessor maskIp, int w, int h, Col
     }
 }
 
-void drawGlobalRoiEdge(ImageProcessor qcIp, Roi globalRoi, int xOffset, int yOffset, int w, int h, Color color, int radius) {
+void drawRoiEdge(ImageProcessor qcIp, Roi roi, int w, int h, Color color, int radius) {
     qcIp.setColor(color);
     for (int y = 0; y < h; y++) {
         for (int x = 0; x < w; x++) {
-            int gx = x + xOffset;
-            int gy = y + yOffset;
-            if (globalRoi.contains(gx, gy)) {
+            if (roi.contains(x, y)) {
                 boolean edge = false;
-                if (!globalRoi.contains(gx - 1, gy)) edge = true;
-                if (!globalRoi.contains(gx + 1, gy)) edge = true;
-                if (!globalRoi.contains(gx, gy - 1)) edge = true;
-                if (!globalRoi.contains(gx, gy + 1)) edge = true;
+                if (!roi.contains(x - 1, y)) edge = true;
+                if (!roi.contains(x + 1, y)) edge = true;
+                if (!roi.contains(x, y - 1)) edge = true;
+                if (!roi.contains(x, y + 1)) edge = true;
                 if (edge) drawDot(qcIp, x, y, radius);
             }
         }
     }
 }
 
-void saveQcOverlay(ImagePlus cropImg, ImagePlus maskImg, Roi globalRoi, int xOffset, int yOffset, String outPath) {
+void saveQcOverlay(ImagePlus img, ImagePlus maskImg, Roi roi, String outPath) {
     try {
-        ImagePlus qc = cropImg.duplicate();
+        ImagePlus qc = img.duplicate();
         if (qc.getStackSize() > 1) qc.setSlice(1);
         IJ.run(qc, "RGB Color", "");
 
         ImageProcessor qcIp = qc.getProcessor();
         ImageProcessor maskIp = maskImg.getProcessor();
-
         int w = qc.getWidth();
         int h = qc.getHeight();
 
         // ROI-Grenze schwarz breit + weiss schmal
-        drawGlobalRoiEdge(qcIp, globalRoi, xOffset, yOffset, w, h, Color.black, 2);
-        drawGlobalRoiEdge(qcIp, globalRoi, xOffset, yOffset, w, h, Color.white, 1);
+        drawRoiEdge(qcIp, roi, w, h, Color.black, 2);
+        drawRoiEdge(qcIp, roi, w, h, Color.white, 1);
 
         // CD31-Maskenrand magenta
         drawMaskEdges(qcIp, maskIp, w, h, Color.magenta, 1);
@@ -335,29 +294,6 @@ void saveQcOverlay(ImagePlus cropImg, ImagePlus maskImg, Roi globalRoi, int xOff
     } catch (Exception e) {
         IJ.log("Konnte QC-Overlay nicht speichern: " + e.getMessage());
     }
-}
-
-void setMicronCalibration(ImagePlus img, double pixelWidthUm, double pixelHeightUm) {
-    Calibration cal = img.getCalibration();
-    if (cal == null) cal = new Calibration();
-    cal.pixelWidth = pixelWidthUm;
-    cal.pixelHeight = pixelHeightUm;
-    cal.pixelDepth = 1.0;
-    cal.setUnit("micron");
-    img.setCalibration(cal);
-}
-
-int getArgmaxClassIndex(ImageStack probStack, int x, int y, int stackSize) {
-    int bestIdx = 1;
-    float bestVal = -1.0f;
-    for (int s = 1; s <= stackSize; s++) {
-        float v = probStack.getProcessor(s).getPixelValue(x, y);
-        if (v > bestVal) {
-            bestVal = v;
-            bestIdx = s;
-        }
-    }
-    return bestIdx;
 }
 
 double[] analyzeParticles0Infinity(ImagePlus maskImg) {
@@ -412,30 +348,27 @@ if (outputDir == null) return;
 // -------------------------
 // 5) PARAMETERDIALOG
 // -------------------------
-GenericDialog gd = new GenericDialog("CD31 TWS Area Analyse");
-gd.addStringField("Run_Name", "CD31_TWS_Run", 30);
-gd.addNumericField("CD31_Class_Index_in_TWS_probability_stack", 1, 0);
+GenericDialog gd = new GenericDialog("CD31 TWS Area Analyse - FINAL Create Result");
+gd.addStringField("Run_Name", "CD31_TWS_CreateResult_Run", 30);
+gd.addNumericField("CD31_Result_Class_Value", 0, 0);
 gd.addNumericField("Pixel_width_um", 1.02, 6);
 gd.addNumericField("Pixel_height_um", 1.02, 6);
 gd.addCheckbox("Overwrite_image_calibration_with_values_above", true);
-gd.addNumericField("ROI_crop_margin_px", 50, 0);
 gd.addCheckbox("Save_CD31_raw_masks", true);
 gd.addCheckbox("Save_QC_overlays", true);
-gd.addMessage("Hinweis: CD31-Maske wird direkt als weiss=positiv, schwarz=Hintergrund erzeugt.\nKein Close, kein Fill Holes, Analyze Particles 0-Infinity.");
+gd.addMessage("Workflow: Create Result -> Klasse thresholden -> CD31 weiss / Hintergrund schwarz -> Analyze 0-Infinity.\nFinaler Wert: Total Area / ROI area * 100.\nDefault CD31_Result_Class_Value = 0, wenn dein manuelles Threshold 0-0 war.");
 gd.showDialog();
 if (gd.wasCanceled()) return;
 
 String runName = gd.getNextString();
-int cd31ClassIndex = (int) gd.getNextNumber();
+int cd31ResultClassValue = (int) gd.getNextNumber();
 double pixelWidthUm = gd.getNextNumber();
 double pixelHeightUm = gd.getNextNumber();
 boolean overwriteCal = gd.getNextBoolean();
-int cropMarginPx = (int) gd.getNextNumber();
 boolean saveMasks = gd.getNextBoolean();
 boolean saveOverlays = gd.getNextBoolean();
 
-if (cd31ClassIndex < 1) cd31ClassIndex = 1;
-if (cropMarginPx < 0) cropMarginPx = 0;
+if (cd31ResultClassValue < 0) cd31ResultClassValue = 0;
 
 // -------------------------
 // 6) OUTPUT-STRUKTUR
@@ -444,16 +377,16 @@ String runDate = new SimpleDateFormat("yyyy-MM-dd_HH-mm-ss").format(new Date());
 String runId = runDate + "_" + sanitizeForFileName(runName);
 
 String runOutDir = outputDir + runId + File.separator;
+String resultDir = runOutDir + "TWS_classified_results" + File.separator;
 String maskDir = runOutDir + "CD31_raw_masks" + File.separator;
 String qcDir = runOutDir + "QC_overlays" + File.separator;
-String cropDir = runOutDir + "ROI_crops" + File.separator;
 String summaryCsvPath = runOutDir + "CD31_TWS_Summary.csv";
 String logPath = runOutDir + "CD31_TWS_Log.txt";
 
 ensureDir(runOutDir);
+ensureDir(resultDir);
 ensureDir(maskDir);
 ensureDir(qcDir);
-ensureDir(cropDir);
 ensureSummaryHeader(summaryCsvPath);
 
 appendLog(logPath, "=================================================");
@@ -465,10 +398,10 @@ appendLog(logPath, "Input: " + inputDir);
 appendLog(logPath, "ROI: " + roiDir);
 appendLog(logPath, "Classifier: " + classifierPath);
 appendLog(logPath, "Output: " + runOutDir);
-appendLog(logPath, "CD31_Class_Index: " + cd31ClassIndex);
+appendLog(logPath, "CD31_Result_Class_Value: " + cd31ResultClassValue);
 appendLog(logPath, "Pixel size: " + pixelWidthUm + " x " + pixelHeightUm + " um");
 appendLog(logPath, "Overwrite calibration: " + overwriteCal);
-appendLog(logPath, "Crop margin px: " + cropMarginPx);
+appendLog(logPath, "Workflow: Create Result full image, ROI-restricted mask, Analyze Particles 0-Infinity");
 
 // -------------------------
 // 7) CLASSIFIER LADEN
@@ -501,8 +434,7 @@ for (int i = 0; i < files.length; i++) {
     appendLog(logPath, "Bild: " + fileName);
 
     ImagePlus img = null;
-    ImagePlus cropImg = null;
-    ImagePlus prob = null;
+    ImagePlus classified = null;
     ImagePlus maskImg = null;
 
     try {
@@ -535,43 +467,29 @@ for (int i = 0; i < files.length; i++) {
             continue;
         }
 
-        Rectangle cropBounds = getExpandedCropBounds(roi, img.getWidth(), img.getHeight(), cropMarginPx);
-        cropImg = cropImageToBounds(img, cropBounds);
-        cropImg.setTitle(baseName + "_ROI_crop");
-        if (overwriteCal) setMicronCalibration(cropImg, pixelWidthUm, pixelHeightUm);
-
-        new FileSaver(cropImg).saveAsTiff(cropDir + baseName + "_ROI_crop.tif");
-
-        // TWS anwenden: Probability-Stack
-        prob = segmentator.applyClassifier(cropImg, 0, true);
-        if (prob == null) {
-            appendLog(logPath, "  -> FEHLER: TWS Probability-Stack konnte nicht erzeugt werden.");
+        // TWS anwenden: klassifiziertes Result-Bild wie manuell "Create Result".
+        classified = segmentator.applyClassifier(img, 0, false);
+        if (classified == null) {
+            appendLog(logPath, "  -> FEHLER: TWS klassifiziertes Result-Bild konnte nicht erzeugt werden.");
             skipped++;
             continue;
         }
+        if (classified.getStackSize() > 1) classified.setSlice(1);
+        classified.setCalibration(img.getCalibration());
+        new FileSaver(classified).saveAsTiff(resultDir + baseName + "_TWS_classified_result.tif");
 
-        int stackSize = prob.getStackSize();
-        if (cd31ClassIndex > stackSize) {
-            appendLog(logPath, "  -> FEHLER: CD31_Class_Index groesser als StackSize. StackSize=" + stackSize);
-            skipped++;
-            continue;
-        }
-
-        ImageStack probStack = prob.getStack();
-        int w = cropImg.getWidth();
-        int h = cropImg.getHeight();
+        int w = img.getWidth();
+        int h = img.getHeight();
+        ImageProcessor classIp = classified.getProcessor();
 
         ByteProcessor maskBp = new ByteProcessor(w, h);
         long cd31PixelCount = 0;
 
-        // Argmax-Klassifikation innerhalb der gespeicherten Polygon-ROI.
         for (int y = 0; y < h; y++) {
-            int gy = y + cropBounds.y;
             for (int x = 0; x < w; x++) {
-                int gx = x + cropBounds.x;
-                if (roi.contains(gx, gy)) {
-                    int best = getArgmaxClassIndex(probStack, x, y, stackSize);
-                    if (best == cd31ClassIndex) {
+                if (roi.contains(x, y)) {
+                    int classValue = (int) Math.round(classIp.getPixelValue(x, y));
+                    if (classValue == cd31ResultClassValue) {
                         maskBp.set(x, y, 255); // CD31 positiv weiss
                         cd31PixelCount++;
                     } else {
@@ -584,12 +502,12 @@ for (int i = 0; i < files.length; i++) {
         }
 
         maskImg = new ImagePlus(baseName + "_CD31_raw_mask", maskBp);
-        maskImg.setCalibration(cropImg.getCalibration());
+        maskImg.setCalibration(img.getCalibration());
 
         double cd31AreaUm2 = cd31PixelCount * pixelWidthUm * pixelHeightUm;
         double cd31Pct = (cd31AreaUm2 / roiTarUm2) * 100.0;
 
-        // Analyze Particles 0-Infinity auf der Maske, nur als QC/vergleichbare Ausgabe.
+        // Analyze Particles 0-Infinity auf der Maske. Area sollte wegen weisser Maske cd31Area entsprechen.
         double[] particleOut = analyzeParticles0Infinity(maskImg);
         int particleCount = (int) particleOut[0];
         double particleTotalArea = particleOut[1];
@@ -599,7 +517,7 @@ for (int i = 0; i < files.length; i++) {
             new FileSaver(maskImg).saveAsTiff(maskDir + baseName + "_CD31_raw_mask.tif");
         }
         if (saveOverlays) {
-            saveQcOverlay(cropImg, maskImg, roi, cropBounds.x, cropBounds.y, qcDir + baseName + "_QC_overlay.tif");
+            saveQcOverlay(img, maskImg, roi, qcDir + baseName + "_QC_overlay.tif");
         }
 
         appendSummaryRow(
@@ -619,16 +537,11 @@ for (int i = 0; i < files.length; i++) {
             particleAverageSize,
             classifierName,
             classifierPath,
-            cd31ClassIndex,
+            cd31ResultClassValue,
             pixelWidthUm,
             pixelHeightUm,
             img.getWidth(),
             img.getHeight(),
-            cropBounds.x,
-            cropBounds.y,
-            cropBounds.width,
-            cropBounds.height,
-            cropMarginPx,
             runDate
         );
 
@@ -644,8 +557,7 @@ for (int i = 0; i < files.length; i++) {
         skipped++;
     } finally {
         try { if (img != null) img.close(); } catch (Exception ee) {}
-        try { if (cropImg != null) cropImg.close(); } catch (Exception ee) {}
-        try { if (prob != null) prob.close(); } catch (Exception ee) {}
+        try { if (classified != null) classified.close(); } catch (Exception ee) {}
         try { if (maskImg != null) maskImg.close(); } catch (Exception ee) {}
     }
 }

@@ -1,5 +1,5 @@
 // =========================================================
-// CD31_TWS_Area_Makro_V3_CREATE_RESULT_FINAL.bsh
+// cd31_tws_area_makro.bsh
 // Semi-automatic batch analysis for CD31 IHC
 // Fiji/ImageJ + Trainable Weka Segmentation
 //
@@ -54,6 +54,19 @@ import java.util.Arrays;
 // 2) CONSTANTS
 // -------------------------
 String MACRO_VERSION = "CD31_TWS_Area_Makro_V3_CREATE_RESULT_FINAL_2026-05-31";
+
+double DEFAULT_PIXEL_SIZE_UM = 1.02;
+
+String DIR_RESULTS = "TWS_classified_results";
+String DIR_MASKS = "CD31_raw_masks";
+String DIR_QC = "QC_overlays";
+
+String SUMMARY_CSV_NAME = "CD31_TWS_Summary.csv";
+String LOG_NAME = "CD31_TWS_Log.txt";
+
+String SUFFIX_RESULT = "_TWS_classified_result.tif";
+String SUFFIX_MASK = "_CD31_raw_mask";
+String SUFFIX_QC = "_QC_overlay.tif";
 
 // -------------------------
 // 3) HELPER FUNCTIONS
@@ -298,9 +311,6 @@ void saveQcOverlay(ImagePlus img, ImagePlus maskImg, Roi roi, String outPath) {
 
 double[] analyzeParticles0Infinity(ImagePlus maskImg) {
     double[] out = new double[3]; // count, totalArea, averageSize
-    out[0] = 0;
-    out[1] = 0;
-    out[2] = 0;
 
     try {
         ResultsTable rt = new ResultsTable();
@@ -308,7 +318,7 @@ double[] analyzeParticles0Infinity(ImagePlus maskImg) {
         int measurements = Measurements.AREA;
         ParticleAnalyzer pa = new ParticleAnalyzer(options, measurements, rt, 0.0, Double.POSITIVE_INFINITY, 0.0, 1.0);
         pa.setHideOutputImage(true);
-        boolean ok = pa.analyze(maskImg);
+        pa.analyze(maskImg);
         int n = rt.size();
         double sumArea = 0.0;
         for (int i = 0; i < n; i++) {
@@ -351,8 +361,8 @@ if (outputDir == null) return;
 GenericDialog gd = new GenericDialog("CD31 TWS Area Analysis - FINAL Create Result");
 gd.addStringField("Run_Name", "CD31_TWS_CreateResult_Run", 30);
 gd.addNumericField("CD31_Result_Class_Value", 0, 0);
-gd.addNumericField("Pixel_width_um", 1.02, 6);
-gd.addNumericField("Pixel_height_um", 1.02, 6);
+gd.addNumericField("Pixel_width_um", DEFAULT_PIXEL_SIZE_UM, 6);
+gd.addNumericField("Pixel_height_um", DEFAULT_PIXEL_SIZE_UM, 6);
 gd.addCheckbox("Overwrite_image_calibration_with_values_above", true);
 gd.addCheckbox("Save_CD31_raw_masks", true);
 gd.addCheckbox("Save_QC_overlays", true);
@@ -377,11 +387,11 @@ String runDate = new SimpleDateFormat("yyyy-MM-dd_HH-mm-ss").format(new Date());
 String runId = runDate + "_" + sanitizeForFileName(runName);
 
 String runOutDir = outputDir + runId + File.separator;
-String resultDir = runOutDir + "TWS_classified_results" + File.separator;
-String maskDir = runOutDir + "CD31_raw_masks" + File.separator;
-String qcDir = runOutDir + "QC_overlays" + File.separator;
-String summaryCsvPath = runOutDir + "CD31_TWS_Summary.csv";
-String logPath = runOutDir + "CD31_TWS_Log.txt";
+String resultDir = runOutDir + DIR_RESULTS + File.separator;
+String maskDir = runOutDir + DIR_MASKS + File.separator;
+String qcDir = runOutDir + DIR_QC + File.separator;
+String summaryCsvPath = runOutDir + SUMMARY_CSV_NAME;
+String logPath = runOutDir + LOG_NAME;
 
 ensureDir(runOutDir);
 ensureDir(resultDir);
@@ -476,7 +486,7 @@ for (int i = 0; i < files.length; i++) {
         }
         if (classified.getStackSize() > 1) classified.setSlice(1);
         classified.setCalibration(img.getCalibration());
-        new FileSaver(classified).saveAsTiff(resultDir + baseName + "_TWS_classified_result.tif");
+        new FileSaver(classified).saveAsTiff(resultDir + baseName + SUFFIX_RESULT);
 
         int w = img.getWidth();
         int h = img.getHeight();
@@ -492,16 +502,12 @@ for (int i = 0; i < files.length; i++) {
                     if (classValue == cd31ResultClassValue) {
                         maskBp.set(x, y, 255); // CD31 positive: white
                         cd31PixelCount++;
-                    } else {
-                        maskBp.set(x, y, 0);
                     }
-                } else {
-                    maskBp.set(x, y, 0);
                 }
             }
         }
 
-        maskImg = new ImagePlus(baseName + "_CD31_raw_mask", maskBp);
+        maskImg = new ImagePlus(baseName + SUFFIX_MASK, maskBp);
         maskImg.setCalibration(img.getCalibration());
 
         double cd31AreaUm2 = cd31PixelCount * pixelWidthUm * pixelHeightUm;
@@ -514,10 +520,10 @@ for (int i = 0; i < files.length; i++) {
         double particleAverageSize = particleOut[2];
 
         if (saveMasks) {
-            new FileSaver(maskImg).saveAsTiff(maskDir + baseName + "_CD31_raw_mask.tif");
+            new FileSaver(maskImg).saveAsTiff(maskDir + baseName + SUFFIX_MASK + ".tif");
         }
         if (saveOverlays) {
-            saveQcOverlay(img, maskImg, roi, qcDir + baseName + "_QC_overlay.tif");
+            saveQcOverlay(img, maskImg, roi, qcDir + baseName + SUFFIX_QC);
         }
 
         appendSummaryRow(

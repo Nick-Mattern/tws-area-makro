@@ -1,29 +1,29 @@
 // =========================================================
 // CD31_TWS_Area_Makro_V3_CREATE_RESULT_FINAL.bsh
-// Semi-automatische Batch-Auswertung fuer CD31-IHC
+// Semi-automatic batch analysis for CD31 IHC
 // Fiji/ImageJ + Trainable Weka Segmentation
 //
-// FINALER WORKFLOW FUER DAS METHODENPAPER:
-//   - Bilderordner waehlen
-//   - ROI-Ordner waehlen (.roi mit gleichem Basisnamen wie Bild)
-//   - Trainable-Weka-Classifier waehlen (.model)
-//   - Output-Ordner waehlen
-//   - Pro Bild: ROI laden, TWS Create-Result erzeugen, CD31-Klasse thresholden
-//   - Maske: CD31 weiss, Hintergrund schwarz
-//   - Analyze Particles 0-Infinity, kein Close, kein Fill Holes, kein Filter
-//   - Finaler Parameter: CD31.Ar/T.Ar (%) = Total CD31-positive area / ROI area * 100
+// FINAL WORKFLOW FOR THE METHOD PAPER:
+//   - Select image folder
+//   - Select ROI folder (.roi with the same base name as the image)
+//   - Select Trainable Weka classifier (.model)
+//   - Select output folder
+//   - Per image: load ROI, create TWS result, threshold the CD31 class
+//   - Mask: CD31 white, background black
+//   - Analyze Particles 0-Infinity, no Close, no Fill Holes, no filter
+//   - Final parameter: CD31.Ar/T.Ar (%) = total CD31-positive area / ROI area * 100
 //
-// WICHTIG:
-//   Dieses Makro verwendet bewusst das klassifizierte TWS-Result-Bild
-//   entsprechend dem manuellen Workflow "Create Result -> Threshold Klasse 0".
-//   Es verwendet NICHT den Probability/Argmax-Stack.
-//   Es verwendet NICHT die ImageJ-%Area-Spalte fuer den finalen Wert.
+// IMPORTANT:
+//   This macro deliberately uses the classified TWS result image,
+//   matching the manual workflow "Create Result -> Threshold class 0".
+//   It does NOT use the probability/argmax stack.
+//   It does NOT use the ImageJ %Area column for the final value.
 //
-// Sprache: BeanShell
+// Language: BeanShell
 // =========================================================
 
 // -------------------------
-// 1) IMPORTE
+// 1) IMPORTS
 // -------------------------
 import ij.IJ;
 import ij.ImagePlus;
@@ -51,12 +51,12 @@ import java.util.Date;
 import java.util.Arrays;
 
 // -------------------------
-// 2) KONSTANTEN
+// 2) CONSTANTS
 // -------------------------
 String MACRO_VERSION = "CD31_TWS_Area_Makro_V3_CREATE_RESULT_FINAL_2026-05-31";
 
 // -------------------------
-// 3) HILFSFUNKTIONEN
+// 3) HELPER FUNCTIONS
 // -------------------------
 void ensureDir(String path) {
     File d = new File(path);
@@ -282,11 +282,11 @@ void saveQcOverlay(ImagePlus img, ImagePlus maskImg, Roi roi, String outPath) {
         int w = qc.getWidth();
         int h = qc.getHeight();
 
-        // ROI-Grenze schwarz breit + weiss schmal
+        // ROI border: black wide + white narrow
         drawRoiEdge(qcIp, roi, w, h, Color.black, 2);
         drawRoiEdge(qcIp, roi, w, h, Color.white, 1);
 
-        // CD31-Maskenrand magenta
+        // CD31 mask border in magenta
         drawMaskEdges(qcIp, maskIp, w, h, Color.magenta, 1);
 
         new FileSaver(qc).saveAsTiff(outPath);
@@ -325,7 +325,7 @@ double[] analyzeParticles0Infinity(ImagePlus maskImg) {
 }
 
 // -------------------------
-// 4) ORDNER UND DATEIEN WAEHLEN
+// 4) SELECT FOLDERS AND FILES
 // -------------------------
 DirectoryChooser dcIn = new DirectoryChooser("1) Bildordner mit Originalbildern waehlen");
 String inputDir = dcIn.getDirectory();
@@ -346,7 +346,7 @@ String outputDir = dcOut.getDirectory();
 if (outputDir == null) return;
 
 // -------------------------
-// 5) PARAMETERDIALOG
+// 5) PARAMETER DIALOG
 // -------------------------
 GenericDialog gd = new GenericDialog("CD31 TWS Area Analyse - FINAL Create Result");
 gd.addStringField("Run_Name", "CD31_TWS_CreateResult_Run", 30);
@@ -371,7 +371,7 @@ boolean saveOverlays = gd.getNextBoolean();
 if (cd31ResultClassValue < 0) cd31ResultClassValue = 0;
 
 // -------------------------
-// 6) OUTPUT-STRUKTUR
+// 6) OUTPUT STRUCTURE
 // -------------------------
 String runDate = new SimpleDateFormat("yyyy-MM-dd_HH-mm-ss").format(new Date());
 String runId = runDate + "_" + sanitizeForFileName(runName);
@@ -404,13 +404,13 @@ appendLog(logPath, "Overwrite calibration: " + overwriteCal);
 appendLog(logPath, "Workflow: Create Result full image, ROI-restricted mask, Analyze Particles 0-Infinity");
 
 // -------------------------
-// 7) CLASSIFIER LADEN
+// 7) LOAD CLASSIFIER
 // -------------------------
 WekaSegmentation segmentator = new WekaSegmentation();
 segmentator.loadClassifier(classifierPath);
 
 // -------------------------
-// 8) DATEIEN VERARBEITEN
+// 8) PROCESS FILES
 // -------------------------
 File inDirFile = new File(inputDir);
 File[] files = inDirFile.listFiles();
@@ -467,7 +467,7 @@ for (int i = 0; i < files.length; i++) {
             continue;
         }
 
-        // TWS anwenden: klassifiziertes Result-Bild wie manuell "Create Result".
+        // Apply TWS: classified result image, same as the manual "Create Result".
         classified = segmentator.applyClassifier(img, 0, false);
         if (classified == null) {
             appendLog(logPath, "  -> FEHLER: TWS klassifiziertes Result-Bild konnte nicht erzeugt werden.");
@@ -490,7 +490,7 @@ for (int i = 0; i < files.length; i++) {
                 if (roi.contains(x, y)) {
                     int classValue = (int) Math.round(classIp.getPixelValue(x, y));
                     if (classValue == cd31ResultClassValue) {
-                        maskBp.set(x, y, 255); // CD31 positiv weiss
+                        maskBp.set(x, y, 255); // CD31 positive: white
                         cd31PixelCount++;
                     } else {
                         maskBp.set(x, y, 0);
@@ -507,7 +507,7 @@ for (int i = 0; i < files.length; i++) {
         double cd31AreaUm2 = cd31PixelCount * pixelWidthUm * pixelHeightUm;
         double cd31Pct = (cd31AreaUm2 / roiTarUm2) * 100.0;
 
-        // Analyze Particles 0-Infinity auf der Maske. Area sollte wegen weisser Maske cd31Area entsprechen.
+        // Analyze Particles 0-Infinity on the mask. Area should match cd31Area since the mask is white.
         double[] particleOut = analyzeParticles0Infinity(maskImg);
         int particleCount = (int) particleOut[0];
         double particleTotalArea = particleOut[1];

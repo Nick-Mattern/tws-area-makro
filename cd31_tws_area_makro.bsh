@@ -73,11 +73,15 @@ String SUFFIX_QC = "_QC_overlay.tif";
 // -------------------------
 void ensureDir(String path) {
     File d = new File(path);
-    if (!d.exists()) d.mkdirs();
+
+    if (!d.exists()) {
+        d.mkdirs();
+    }
 }
 
 boolean isImageFile(String name) {
     String lower = name.toLowerCase();
+
     return lower.endsWith(".tif") || lower.endsWith(".tiff") ||
            lower.endsWith(".jpg") || lower.endsWith(".jpeg") ||
            lower.endsWith(".png") || lower.endsWith(".bmp");
@@ -85,28 +89,43 @@ boolean isImageFile(String name) {
 
 String getBaseName(String name) {
     int dot = name.lastIndexOf('.');
-    if (dot > 0) return name.substring(0, dot);
+
+    if (dot > 0) {
+        return name.substring(0, dot);
+    }
+
     return name;
 }
 
 String sanitizeForFileName(String s) {
-    if (s == null || s.length() == 0) return "Run";
+    if (s == null || s.length() == 0) {
+        return "Run";
+    }
+
     return s.replaceAll("[^A-Za-z0-9_\\-]+", "_");
 }
 
 String csvEscape(String s) {
-    if (s == null) s = "";
+    if (s == null) {
+        s = "";
+    }
+
     s = s.replace("\"", "\"\"");
+
     return "\"" + s + "\"";
 }
 
 String formatDouble(double x, int digits) {
-    if (Double.isNaN(x) || Double.isInfinite(x)) return "NA";
+    if (Double.isNaN(x) || Double.isInfinite(x)) {
+        return "NA";
+    }
+
     return IJ.d2s(x, digits);
 }
 
 void appendLog(String logPath, String msg) {
     BufferedWriter bw = null;
+
     try {
         bw = new BufferedWriter(new FileWriter(logPath, true));
         bw.write(msg);
@@ -114,15 +133,24 @@ void appendLog(String logPath, String msg) {
     } catch (Exception e) {
         IJ.log("Could not write log: " + e.getMessage());
     } finally {
-        try { if (bw != null) bw.close(); } catch (Exception ee) {}
+        try {
+            if (bw != null) {
+                bw.close();
+            }
+        } catch (Exception ee) {
+            // ignore
+        }
     }
+
     IJ.log(msg);
 }
 
 void ensureSummaryHeader(String summaryCsvPath) {
     BufferedWriter bw = null;
+
     try {
         File f = new File(summaryCsvPath);
+
         if (!f.exists()) {
             bw = new BufferedWriter(new FileWriter(f, true));
             bw.write(
@@ -153,7 +181,13 @@ void ensureSummaryHeader(String summaryCsvPath) {
     } catch (Exception e) {
         IJ.log("Could not write summary header: " + e.getMessage());
     } finally {
-        try { if (bw != null) bw.close(); } catch (Exception ee) {}
+        try {
+            if (bw != null) {
+                bw.close();
+            }
+        } catch (Exception ee) {
+            // ignore
+        }
     }
 }
 
@@ -182,6 +216,7 @@ void appendSummaryRow(
     String runDate
 ) {
     BufferedWriter bw = null;
+
     try {
         bw = new BufferedWriter(new FileWriter(summaryCsvPath, true));
         bw.write(
@@ -211,7 +246,13 @@ void appendSummaryRow(
     } catch (Exception e) {
         IJ.log("Could not write summary row: " + e.getMessage());
     } finally {
-        try { if (bw != null) bw.close(); } catch (Exception ee) {}
+        try {
+            if (bw != null) {
+                bw.close();
+            }
+        } catch (Exception ee) {
+            // ignore
+        }
     }
 }
 
@@ -219,18 +260,28 @@ Roi loadMatchingRoi(String roiDirPath, String baseName) {
     try {
         String roiPath = roiDirPath + baseName + ".roi";
         File roiFile = new File(roiPath);
-        if (!roiFile.exists()) return null;
+
+        if (!roiFile.exists()) {
+            return null;
+        }
+
         RoiDecoder rd = new RoiDecoder(roiPath);
+
         return rd.getRoi();
     } catch (Exception e) {
         IJ.log("Could not load ROI for " + baseName + ": " + e.getMessage());
+
         return null;
     }
 }
 
 void setMicronCalibration(ImagePlus img, double pixelWidthUm, double pixelHeightUm) {
     Calibration cal = img.getCalibration();
-    if (cal == null) cal = new Calibration();
+
+    if (cal == null) {
+        cal = new Calibration();
+    }
+
     cal.pixelWidth = pixelWidthUm;
     cal.pixelHeight = pixelHeightUm;
     cal.pixelDepth = 1.0;
@@ -242,49 +293,84 @@ double measureRoiAreaUm2(ImagePlus img, Roi roi) {
     img.setRoi(roi);
     ImageStatistics stats = img.getStatistics(Measurements.AREA);
     img.deleteRoi();
+
     return stats.area;
 }
 
 boolean isMaskEdge(ImageProcessor maskIp, int x, int y, int w, int h) {
-    if (maskIp.getPixel(x, y) == 0) return false;
-    if (x == 0 || y == 0 || x == w - 1 || y == h - 1) return true;
-    if (maskIp.getPixel(x - 1, y) == 0) return true;
-    if (maskIp.getPixel(x + 1, y) == 0) return true;
-    if (maskIp.getPixel(x, y - 1) == 0) return true;
-    if (maskIp.getPixel(x, y + 1) == 0) return true;
+    if (maskIp.getPixel(x, y) == 0) {
+        return false;
+    }
+
+    if (x == 0 || y == 0 || x == w - 1 || y == h - 1) {
+        return true;
+    }
+
+    if (maskIp.getPixel(x - 1, y) == 0) {
+        return true;
+    }
+    if (maskIp.getPixel(x + 1, y) == 0) {
+        return true;
+    }
+    if (maskIp.getPixel(x, y - 1) == 0) {
+        return true;
+    }
+    if (maskIp.getPixel(x, y + 1) == 0) {
+        return true;
+    }
+
     return false;
 }
 
 void drawDot(ImageProcessor ip, int x, int y, int radius) {
     int w = ip.getWidth();
     int h = ip.getHeight();
+
     for (int yy = y - radius; yy <= y + radius; yy++) {
         for (int xx = x - radius; xx <= x + radius; xx++) {
-            if (xx >= 0 && yy >= 0 && xx < w && yy < h) ip.drawPixel(xx, yy);
+            if (xx >= 0 && yy >= 0 && xx < w && yy < h) {
+                ip.drawPixel(xx, yy);
+            }
         }
     }
 }
 
 void drawMaskEdges(ImageProcessor qcIp, ImageProcessor maskIp, int w, int h, Color color, int radius) {
     qcIp.setColor(color);
+
     for (int y = 0; y < h; y++) {
         for (int x = 0; x < w; x++) {
-            if (isMaskEdge(maskIp, x, y, w, h)) drawDot(qcIp, x, y, radius);
+            if (isMaskEdge(maskIp, x, y, w, h)) {
+                drawDot(qcIp, x, y, radius);
+            }
         }
     }
 }
 
 void drawRoiEdge(ImageProcessor qcIp, Roi roi, int w, int h, Color color, int radius) {
     qcIp.setColor(color);
+
     for (int y = 0; y < h; y++) {
         for (int x = 0; x < w; x++) {
             if (roi.contains(x, y)) {
                 boolean edge = false;
-                if (!roi.contains(x - 1, y)) edge = true;
-                if (!roi.contains(x + 1, y)) edge = true;
-                if (!roi.contains(x, y - 1)) edge = true;
-                if (!roi.contains(x, y + 1)) edge = true;
-                if (edge) drawDot(qcIp, x, y, radius);
+
+                if (!roi.contains(x - 1, y)) {
+                    edge = true;
+                }
+                if (!roi.contains(x + 1, y)) {
+                    edge = true;
+                }
+                if (!roi.contains(x, y - 1)) {
+                    edge = true;
+                }
+                if (!roi.contains(x, y + 1)) {
+                    edge = true;
+                }
+
+                if (edge) {
+                    drawDot(qcIp, x, y, radius);
+                }
             }
         }
     }
@@ -293,7 +379,11 @@ void drawRoiEdge(ImageProcessor qcIp, Roi roi, int w, int h, Color color, int ra
 void saveQcOverlay(ImagePlus img, ImagePlus maskImg, Roi roi, String outPath) {
     try {
         ImagePlus qc = img.duplicate();
-        if (qc.getStackSize() > 1) qc.setSlice(1);
+
+        if (qc.getStackSize() > 1) {
+            qc.setSlice(1);
+        }
+
         IJ.run(qc, "RGB Color", "");
 
         ImageProcessor qcIp = qc.getProcessor();
@@ -325,14 +415,20 @@ double[] analyzeParticles0Infinity(ImagePlus maskImg) {
         ParticleAnalyzer pa = new ParticleAnalyzer(options, measurements, rt, 0.0, Double.POSITIVE_INFINITY, 0.0, 1.0);
         pa.setHideOutputImage(true);
         pa.analyze(maskImg);
+
         int n = rt.size();
         double sumArea = 0.0;
+
         for (int i = 0; i < n; i++) {
             sumArea += rt.getValue("Area", i);
         }
+
         out[0] = n;
         out[1] = sumArea;
-        if (n > 0) out[2] = sumArea / n;
+
+        if (n > 0) {
+            out[2] = sumArea / n;
+        }
     } catch (Exception e) {
         IJ.log("Analyze Particles failed internally: " + e.getMessage());
     }
@@ -345,21 +441,34 @@ double[] analyzeParticles0Infinity(ImagePlus maskImg) {
 // -------------------------
 DirectoryChooser dcIn = new DirectoryChooser("1) Select image folder with original images");
 String inputDir = dcIn.getDirectory();
-if (inputDir == null) return;
+
+if (inputDir == null) {
+    return;
+}
 
 DirectoryChooser dcRoi = new DirectoryChooser("2) Select ROI folder (.roi, same name as image)");
 String roiDir = dcRoi.getDirectory();
-if (roiDir == null) return;
+
+if (roiDir == null) {
+    return;
+}
 
 OpenDialog od = new OpenDialog("3) Select Trainable Weka classifier (.model)", null);
 String classifierDir = od.getDirectory();
 String classifierName = od.getFileName();
-if (classifierDir == null || classifierName == null) return;
+
+if (classifierDir == null || classifierName == null) {
+    return;
+}
+
 String classifierPath = classifierDir + classifierName;
 
 DirectoryChooser dcOut = new DirectoryChooser("4) Select output folder");
 String outputDir = dcOut.getDirectory();
-if (outputDir == null) return;
+
+if (outputDir == null) {
+    return;
+}
 
 // -------------------------
 // 5) PARAMETER DIALOG
@@ -374,7 +483,10 @@ gd.addCheckbox("Save_CD31_raw_masks", true);
 gd.addCheckbox("Save_QC_overlays", true);
 gd.addMessage("Workflow: Create Result -> threshold class -> CD31 white / background black -> Analyze 0-Infinity.\nFinal value: Total Area / ROI area * 100.\nDefault CD31_Result_Class_Value = 0 if your manual threshold was 0-0.");
 gd.showDialog();
-if (gd.wasCanceled()) return;
+
+if (gd.wasCanceled()) {
+    return;
+}
 
 String runName = gd.getNextString();
 int cd31ResultClassValue = (int) gd.getNextNumber();
@@ -384,7 +496,9 @@ boolean overwriteCal = gd.getNextBoolean();
 boolean saveMasks = gd.getNextBoolean();
 boolean saveOverlays = gd.getNextBoolean();
 
-if (cd31ResultClassValue < 0) cd31ResultClassValue = 0;
+if (cd31ResultClassValue < 0) {
+    cd31ResultClassValue = 0;
+}
 
 // -------------------------
 // 6) OUTPUT STRUCTURE
@@ -430,10 +544,12 @@ segmentator.loadClassifier(classifierPath);
 // -------------------------
 File inDirFile = new File(inputDir);
 File[] files = inDirFile.listFiles();
+
 if (files == null || files.length == 0) {
     IJ.error("No files found in the image folder.");
     return;
 }
+
 Arrays.sort(files);
 
 int processed = 0;
@@ -441,9 +557,16 @@ int skipped = 0;
 
 for (int i = 0; i < files.length; i++) {
     File f = files[i];
-    if (f == null || f.isDirectory()) continue;
+
+    if (f == null || f.isDirectory()) {
+        continue;
+    }
+
     String fileName = f.getName();
-    if (!isImageFile(fileName)) continue;
+
+    if (!isImageFile(fileName)) {
+        continue;
+    }
 
     String baseName = getBaseName(fileName);
     appendLog(logPath, "-------------------------------------------------");
@@ -455,6 +578,7 @@ for (int i = 0; i < files.length; i++) {
 
     try {
         Roi roi = loadMatchingRoi(roiDir, baseName);
+
         if (roi == null) {
             appendLog(logPath, "  -> SKIPPED: No matching ROI found: " + baseName + ".roi");
             skipped++;
@@ -462,6 +586,7 @@ for (int i = 0; i < files.length; i++) {
         }
 
         img = IJ.openImage(f.getAbsolutePath());
+
         if (img == null) {
             appendLog(logPath, "  -> SKIPPED: Image could not be opened.");
             skipped++;
@@ -477,6 +602,7 @@ for (int i = 0; i < files.length; i++) {
         }
 
         double roiTarUm2 = measureRoiAreaUm2(img, roi);
+
         if (roiTarUm2 <= 0 || Double.isNaN(roiTarUm2)) {
             appendLog(logPath, "  -> SKIPPED: ROI area invalid.");
             skipped++;
@@ -485,12 +611,17 @@ for (int i = 0; i < files.length; i++) {
 
         // Apply TWS: classified result image, same as the manual "Create Result".
         classified = segmentator.applyClassifier(img, 0, false);
+
         if (classified == null) {
             appendLog(logPath, "  -> ERROR: TWS classified result image could not be created.");
             skipped++;
             continue;
         }
-        if (classified.getStackSize() > 1) classified.setSlice(1);
+
+        if (classified.getStackSize() > 1) {
+            classified.setSlice(1);
+        }
+
         classified.setCalibration(img.getCalibration());
         new FileSaver(classified).saveAsTiff(resultDir + baseName + SUFFIX_RESULT);
 
@@ -505,6 +636,7 @@ for (int i = 0; i < files.length; i++) {
             for (int x = 0; x < w; x++) {
                 if (roi.contains(x, y)) {
                     int classValue = (int) Math.round(classIp.getPixelValue(x, y));
+
                     if (classValue == cd31ResultClassValue) {
                         maskBp.set(x, y, 255); // CD31 positive: white
                         cd31PixelCount++;
@@ -568,9 +700,27 @@ for (int i = 0; i < files.length; i++) {
         appendLog(logPath, "  -> ERROR: " + e.getMessage());
         skipped++;
     } finally {
-        try { if (img != null) img.close(); } catch (Exception ee) {}
-        try { if (classified != null) classified.close(); } catch (Exception ee) {}
-        try { if (maskImg != null) maskImg.close(); } catch (Exception ee) {}
+        try {
+            if (img != null) {
+                img.close();
+            }
+        } catch (Exception ee) {
+            // ignore
+        }
+        try {
+            if (classified != null) {
+                classified.close();
+            }
+        } catch (Exception ee) {
+            // ignore
+        }
+        try {
+            if (maskImg != null) {
+                maskImg.close();
+            }
+        } catch (Exception ee) {
+            // ignore
+        }
     }
 }
 

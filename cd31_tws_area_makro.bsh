@@ -106,22 +106,25 @@ String formatDouble(double x, int digits) {
 }
 
 void appendLog(String logPath, String msg) {
+    BufferedWriter bw = null;
     try {
-        BufferedWriter bw = new BufferedWriter(new FileWriter(logPath, true));
+        bw = new BufferedWriter(new FileWriter(logPath, true));
         bw.write(msg);
         bw.newLine();
-        bw.close();
     } catch (Exception e) {
         IJ.log("Could not write log: " + e.getMessage());
+    } finally {
+        try { if (bw != null) bw.close(); } catch (Exception ee) {}
     }
     IJ.log(msg);
 }
 
 void ensureSummaryHeader(String summaryCsvPath) {
+    BufferedWriter bw = null;
     try {
         File f = new File(summaryCsvPath);
         if (!f.exists()) {
-            BufferedWriter bw = new BufferedWriter(new FileWriter(f, true));
+            bw = new BufferedWriter(new FileWriter(f, true));
             bw.write(
                 "Run_ID," +
                 "Run_Name," +
@@ -146,10 +149,11 @@ void ensureSummaryHeader(String summaryCsvPath) {
                 "Run_Date"
             );
             bw.newLine();
-            bw.close();
         }
     } catch (Exception e) {
         IJ.log("Could not write summary header: " + e.getMessage());
+    } finally {
+        try { if (bw != null) bw.close(); } catch (Exception ee) {}
     }
 }
 
@@ -177,8 +181,9 @@ void appendSummaryRow(
     int imageHeight,
     String runDate
 ) {
+    BufferedWriter bw = null;
     try {
-        BufferedWriter bw = new BufferedWriter(new FileWriter(summaryCsvPath, true));
+        bw = new BufferedWriter(new FileWriter(summaryCsvPath, true));
         bw.write(
             csvEscape(runId) + "," +
             csvEscape(runName) + "," +
@@ -203,9 +208,10 @@ void appendSummaryRow(
             csvEscape(runDate)
         );
         bw.newLine();
-        bw.close();
     } catch (Exception e) {
         IJ.log("Could not write summary row: " + e.getMessage());
+    } finally {
+        try { if (bw != null) bw.close(); } catch (Exception ee) {}
     }
 }
 

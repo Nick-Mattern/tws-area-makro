@@ -99,7 +99,7 @@ void appendLog(String logPath, String msg) {
         bw.newLine();
         bw.close();
     } catch (Exception e) {
-        IJ.log("Konnte Log nicht schreiben: " + e.getMessage());
+        IJ.log("Could not write log: " + e.getMessage());
     }
     IJ.log(msg);
 }
@@ -136,7 +136,7 @@ void ensureSummaryHeader(String summaryCsvPath) {
             bw.close();
         }
     } catch (Exception e) {
-        IJ.log("Konnte Summary-Header nicht schreiben: " + e.getMessage());
+        IJ.log("Could not write summary header: " + e.getMessage());
     }
 }
 
@@ -192,7 +192,7 @@ void appendSummaryRow(
         bw.newLine();
         bw.close();
     } catch (Exception e) {
-        IJ.log("Konnte Summary-Zeile nicht schreiben: " + e.getMessage());
+        IJ.log("Could not write summary row: " + e.getMessage());
     }
 }
 
@@ -204,7 +204,7 @@ Roi loadMatchingRoi(String roiDirPath, String baseName) {
         RoiDecoder rd = new RoiDecoder(roiPath);
         return rd.getRoi();
     } catch (Exception e) {
-        IJ.log("Konnte ROI nicht laden fuer " + baseName + ": " + e.getMessage());
+        IJ.log("Could not load ROI for " + baseName + ": " + e.getMessage());
         return null;
     }
 }
@@ -292,7 +292,7 @@ void saveQcOverlay(ImagePlus img, ImagePlus maskImg, Roi roi, String outPath) {
         new FileSaver(qc).saveAsTiff(outPath);
         qc.close();
     } catch (Exception e) {
-        IJ.log("Konnte QC-Overlay nicht speichern: " + e.getMessage());
+        IJ.log("Could not save QC overlay: " + e.getMessage());
     }
 }
 
@@ -318,7 +318,7 @@ double[] analyzeParticles0Infinity(ImagePlus maskImg) {
         out[1] = sumArea;
         if (n > 0) out[2] = sumArea / n;
     } catch (Exception e) {
-        IJ.log("Analyze Particles intern fehlgeschlagen: " + e.getMessage());
+        IJ.log("Analyze Particles failed internally: " + e.getMessage());
     }
 
     return out;
@@ -327,28 +327,28 @@ double[] analyzeParticles0Infinity(ImagePlus maskImg) {
 // -------------------------
 // 4) SELECT FOLDERS AND FILES
 // -------------------------
-DirectoryChooser dcIn = new DirectoryChooser("1) Bildordner mit Originalbildern waehlen");
+DirectoryChooser dcIn = new DirectoryChooser("1) Select image folder with original images");
 String inputDir = dcIn.getDirectory();
 if (inputDir == null) return;
 
-DirectoryChooser dcRoi = new DirectoryChooser("2) ROI-Ordner waehlen (.roi, gleicher Name wie Bild)");
+DirectoryChooser dcRoi = new DirectoryChooser("2) Select ROI folder (.roi, same name as image)");
 String roiDir = dcRoi.getDirectory();
 if (roiDir == null) return;
 
-OpenDialog od = new OpenDialog("3) Trainable-Weka-Classifier waehlen (.model)", null);
+OpenDialog od = new OpenDialog("3) Select Trainable Weka classifier (.model)", null);
 String classifierDir = od.getDirectory();
 String classifierName = od.getFileName();
 if (classifierDir == null || classifierName == null) return;
 String classifierPath = classifierDir + classifierName;
 
-DirectoryChooser dcOut = new DirectoryChooser("4) Output-Ordner waehlen");
+DirectoryChooser dcOut = new DirectoryChooser("4) Select output folder");
 String outputDir = dcOut.getDirectory();
 if (outputDir == null) return;
 
 // -------------------------
 // 5) PARAMETER DIALOG
 // -------------------------
-GenericDialog gd = new GenericDialog("CD31 TWS Area Analyse - FINAL Create Result");
+GenericDialog gd = new GenericDialog("CD31 TWS Area Analysis - FINAL Create Result");
 gd.addStringField("Run_Name", "CD31_TWS_CreateResult_Run", 30);
 gd.addNumericField("CD31_Result_Class_Value", 0, 0);
 gd.addNumericField("Pixel_width_um", 1.02, 6);
@@ -356,7 +356,7 @@ gd.addNumericField("Pixel_height_um", 1.02, 6);
 gd.addCheckbox("Overwrite_image_calibration_with_values_above", true);
 gd.addCheckbox("Save_CD31_raw_masks", true);
 gd.addCheckbox("Save_QC_overlays", true);
-gd.addMessage("Workflow: Create Result -> Klasse thresholden -> CD31 weiss / Hintergrund schwarz -> Analyze 0-Infinity.\nFinaler Wert: Total Area / ROI area * 100.\nDefault CD31_Result_Class_Value = 0, wenn dein manuelles Threshold 0-0 war.");
+gd.addMessage("Workflow: Create Result -> threshold class -> CD31 white / background black -> Analyze 0-Infinity.\nFinal value: Total Area / ROI area * 100.\nDefault CD31_Result_Class_Value = 0 if your manual threshold was 0-0.");
 gd.showDialog();
 if (gd.wasCanceled()) return;
 
@@ -415,7 +415,7 @@ segmentator.loadClassifier(classifierPath);
 File inDirFile = new File(inputDir);
 File[] files = inDirFile.listFiles();
 if (files == null || files.length == 0) {
-    IJ.error("Im Bildordner wurden keine Dateien gefunden.");
+    IJ.error("No files found in the image folder.");
     return;
 }
 Arrays.sort(files);
@@ -431,7 +431,7 @@ for (int i = 0; i < files.length; i++) {
 
     String baseName = getBaseName(fileName);
     appendLog(logPath, "-------------------------------------------------");
-    appendLog(logPath, "Bild: " + fileName);
+    appendLog(logPath, "Image: " + fileName);
 
     ImagePlus img = null;
     ImagePlus classified = null;
@@ -440,14 +440,14 @@ for (int i = 0; i < files.length; i++) {
     try {
         Roi roi = loadMatchingRoi(roiDir, baseName);
         if (roi == null) {
-            appendLog(logPath, "  -> UEBERSPRUNGEN: Keine passende ROI gefunden: " + baseName + ".roi");
+            appendLog(logPath, "  -> SKIPPED: No matching ROI found: " + baseName + ".roi");
             skipped++;
             continue;
         }
 
         img = IJ.openImage(f.getAbsolutePath());
         if (img == null) {
-            appendLog(logPath, "  -> UEBERSPRUNGEN: Bild konnte nicht geoeffnet werden.");
+            appendLog(logPath, "  -> SKIPPED: Image could not be opened.");
             skipped++;
             continue;
         }
@@ -462,7 +462,7 @@ for (int i = 0; i < files.length; i++) {
 
         double roiTarUm2 = measureRoiAreaUm2(img, roi);
         if (roiTarUm2 <= 0 || Double.isNaN(roiTarUm2)) {
-            appendLog(logPath, "  -> UEBERSPRUNGEN: ROI-Flaeche ungueltig.");
+            appendLog(logPath, "  -> SKIPPED: ROI area invalid.");
             skipped++;
             continue;
         }
@@ -470,7 +470,7 @@ for (int i = 0; i < files.length; i++) {
         // Apply TWS: classified result image, same as the manual "Create Result".
         classified = segmentator.applyClassifier(img, 0, false);
         if (classified == null) {
-            appendLog(logPath, "  -> FEHLER: TWS klassifiziertes Result-Bild konnte nicht erzeugt werden.");
+            appendLog(logPath, "  -> ERROR: TWS classified result image could not be created.");
             skipped++;
             continue;
         }
@@ -553,7 +553,7 @@ for (int i = 0; i < files.length; i++) {
         processed++;
 
     } catch (Exception e) {
-        appendLog(logPath, "  -> FEHLER: " + e.getMessage());
+        appendLog(logPath, "  -> ERROR: " + e.getMessage());
         skipped++;
     } finally {
         try { if (img != null) img.close(); } catch (Exception ee) {}
@@ -563,14 +563,14 @@ for (int i = 0; i < files.length; i++) {
 }
 
 appendLog(logPath, "=================================================");
-appendLog(logPath, "Fertig.");
-appendLog(logPath, "Verarbeitet: " + processed);
-appendLog(logPath, "Uebersprungen/Fehler: " + skipped);
+appendLog(logPath, "Done.");
+appendLog(logPath, "Processed: " + processed);
+appendLog(logPath, "Skipped/Errors: " + skipped);
 appendLog(logPath, "Summary: " + summaryCsvPath);
 appendLog(logPath, "=================================================");
 
-IJ.showMessage("CD31 TWS Area Analyse fertig",
-    "Verarbeitet: " + processed + "\n" +
-    "Uebersprungen/Fehler: " + skipped + "\n\n" +
+IJ.showMessage("CD31 TWS Area Analysis done",
+    "Processed: " + processed + "\n" +
+    "Skipped/Errors: " + skipped + "\n\n" +
     "Output:\n" + runOutDir
 );

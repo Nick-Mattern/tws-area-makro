@@ -65,3 +65,7 @@ Each run creates a timestamped folder `<output>/<timestamp>_<Run_Name>/` contain
 - The percentage uses `CD31-positive area / ROI area`, **not** ImageJ's `%Area` column.
 - The CD31 area comes from the classified result image (the "Create Result" workflow), **not** from the probability/argmax stack.
 - `Analyze Particles` runs at `0–Infinity` with no Close, no Fill Holes, and no size filter.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
